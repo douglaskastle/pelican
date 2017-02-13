@@ -11,6 +11,8 @@ The idea behind "pages" is that they are usually not temporal in nature and are
 used for content that does not change very often (e.g., "About" or "Contact"
 pages).
 
+You can find sample content in the repository at: ``pelican/samples/content/``
+
 .. _internal_metadata:
 
 File metadata
@@ -53,7 +55,7 @@ install Markdown``.
 
 Pelican also supports `Markdown Extensions`_, which might have to be installed
 separately if they are not included in the default ``Markdown`` package and can
-be configured and loaded via the ``MD_EXTENSIONS`` setting.
+be configured and loaded via the ``MARKDOWN`` setting.
 
 Metadata syntax for Markdown posts should follow this pattern::
 
@@ -455,7 +457,13 @@ Option          Valid values  Description
 =============   ============  =========================================
 anchorlinenos   N/A           If present wrap line numbers in <a> tags.
 classprefix     string        String to prepend to token class names
-hl_lines        numbers       List of lines to be highlighted.
+hl_lines        numbers       List of lines to be highlighted, where
+                              line numbers to highlight are separated
+                              by a space. This is similar to
+                              ``emphasize-lines`` in Sphinx, but it
+                              does not support a range of line numbers
+                              separated by a hyphen, or comma-separated
+                              line numbers.
 lineanchors     string        Wrap each line in an anchor using this
                               string and -linenumber.
 linenos         string        If present or set to "table" output line

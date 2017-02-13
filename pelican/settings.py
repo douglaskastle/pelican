@@ -49,6 +49,7 @@ DEFAULT_CONFIG = {
     'AUTHOR_FEED_RSS': posix_join('feeds', '%s.rss.xml'),
     'TRANSLATION_FEED_ATOM': posix_join('feeds', 'all-%s.atom.xml'),
     'FEED_MAX_ITEMS': '',
+    'RSS_FEED_SUMMARY_ONLY': True,
     'SITEURL': '',
     'SITENAME': 'A Pelican Blog',
     'DISPLAY_PAGES_ON_MENU': True,
@@ -101,13 +102,20 @@ DEFAULT_CONFIG = {
     'PELICAN_CLASS': 'pelican.Pelican',
     'DEFAULT_DATE_FORMAT': '%a %d %B %Y',
     'DATE_FORMATS': {},
-    'MD_EXTENSIONS': {
-        'markdown.extensions.codehilite': {'css_class': 'highlight'},
-        'markdown.extensions.extra': {},
-        'markdown.extensions.meta': {},
+    'MARKDOWN': {
+        'extension_configs': {
+            'markdown.extensions.codehilite': {'css_class': 'highlight'},
+            'markdown.extensions.extra': {},
+            'markdown.extensions.meta': {},
+        },
+        'output_format': 'html5',
     },
-    'JINJA_EXTENSIONS': [],
     'JINJA_FILTERS': {},
+    'JINJA_ENVIRONMENT': {
+        'trim_blocks': True,
+        'lstrip_blocks': True,
+        'extensions': [],
+    },
     'LOG_FILTER': [],
     'LOCALE': [''],  # defaults to user locale
     'DEFAULT_PAGINATION': False,
@@ -151,7 +159,7 @@ def read_settings(path=None, override=None):
                     and not isabs(local_settings[p]):
                 absp = os.path.abspath(os.path.normpath(os.path.join(
                     os.path.dirname(path), local_settings[p])))
-                if p not in ('THEME') or os.path.exists(absp):
+                if p != 'THEME' or os.path.exists(absp):
                     local_settings[p] = absp
 
         if 'PLUGIN_PATH' in local_settings:
@@ -159,6 +167,12 @@ def read_settings(path=None, override=None):
                            'PLUGIN_PATHS, moving it to the new setting name.')
             local_settings['PLUGIN_PATHS'] = local_settings['PLUGIN_PATH']
             del local_settings['PLUGIN_PATH']
+        if 'JINJA_EXTENSIONS' in local_settings:
+            logger.warning('JINJA_EXTENSIONS setting has been deprecated, '
+                           'moving it to JINJA_ENVIRONMENT setting.')
+            local_settings['JINJA_ENVIRONMENT']['extensions'] = \
+                local_settings['JINJA_EXTENSIONS']
+            del local_settings['JINJA_EXTENSIONS']
         if isinstance(local_settings['PLUGIN_PATHS'], six.string_types):
             logger.warning("Defining PLUGIN_PATHS setting as string "
                            "has been deprecated (should be a list)")
@@ -212,6 +226,20 @@ def get_settings_from_file(path, default_settings=DEFAULT_CONFIG):
     return get_settings_from_module(module, default_settings=default_settings)
 
 
+def get_jinja_environment(settings):
+    """Sets the environment for Jinja"""
+
+    jinja_env = settings.setdefault('JINJA_ENVIRONMENT',
+                                    DEFAULT_CONFIG['JINJA_ENVIRONMENT'])
+
+    # Make sure we include the defaults if the user has set env variables
+    for key, value in DEFAULT_CONFIG['JINJA_ENVIRONMENT'].items():
+        if key not in jinja_env:
+            jinja_env[key] = value
+
+    return settings
+
+
 def configure_settings(settings):
     """Provide optimizations, error checking, and warnings for the given
     settings.
@@ -248,6 +276,9 @@ def configure_settings(settings):
         if key in settings:
             settings[key] = settings[key].lower()
 
+    # set defaults for Jinja environment
+    settings = get_jinja_environment(settings)
+
     # standardize strings to lists
     for key in ['LOCALE']:
         if key in settings and isinstance(settings[key], six.string_types):
@@ -275,7 +306,9 @@ def configure_settings(settings):
         except locale.Error:
             pass
     else:
-        logger.warning("LOCALE option doesn't contain a correct value")
+        logger.warning(
+            "Locale could not be set. Check the LOCALE setting, ensuring it "
+            "is valid and available on your system.")
 
     if ('SITEURL' in settings):
         # If SITEURL has a trailing slash, remove it and provide a warning
@@ -350,7 +383,6 @@ def configure_settings(settings):
         'EXTRA_TEMPLATES_PATHS',
         'FILES_TO_COPY',
         'IGNORE_FILES',
-        'JINJA_EXTENSIONS',
         'PAGINATED_DIRECT_TEMPLATES',
         'PLUGINS',
         'STATIC_EXCLUDES',
@@ -366,13 +398,11 @@ def configure_settings(settings):
                            PATH_KEY)
             settings[PATH_KEY] = DEFAULT_CONFIG[PATH_KEY]
 
-    # Save people from declaring MD_EXTENSIONS as a list rather than a dict
-    if not isinstance(settings.get('MD_EXTENSIONS', {}), dict):
-        logger.warning('The format of the MD_EXTENSIONS setting has '
-                       'changed. It should now be a dict mapping '
-                       'fully-qualified extension names to their '
-                       'configurations. Falling back to the default.')
-        settings['MD_EXTENSIONS'] = DEFAULT_CONFIG['MD_EXTENSIONS']
+    # Deprecated warning of MD_EXTENSIONS
+    if 'MD_EXTENSIONS' in settings:
+        logger.warning('MD_EXTENSIONS is deprecated use MARKDOWN '
+                       'instead. Falling back to the default.')
+        settings['MARKDOWN'] = DEFAULT_CONFIG['MARKDOWN']
 
     # Add {PAGE,ARTICLE}_PATHS to {ARTICLE,PAGE}_EXCLUDES
     mutually_exclusive = ('ARTICLE', 'PAGE')

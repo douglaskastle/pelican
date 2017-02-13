@@ -25,7 +25,7 @@ from pelican.utils import (clean_output_dir, file_watcher,
                            folder_watcher, maybe_pluralize)
 from pelican.writers import Writer
 
-__version__ = "3.6.4.dev0"
+__version__ = "3.7.2.dev0"
 DEFAULT_CONFIG_NAME = 'pelicanconf.py'
 logger = logging.getLogger(__name__)
 
@@ -322,6 +322,11 @@ def parse_arguments():
                         dest='selected_paths', default=None,
                         help='Comma separated list of selected paths to write')
 
+    parser.add_argument('--fatal', metavar='errors|warnings',
+                        choices=('errors', 'warnings'), default='',
+                        help=('Exit the program with non-zero status if any '
+                              'errors/warnings encountered.'))
+
     return parser.parse_args()
 
 
@@ -364,6 +369,7 @@ def get_instance(args):
     config_file = args.settings
     if config_file is None and os.path.isfile(DEFAULT_CONFIG_NAME):
             config_file = DEFAULT_CONFIG_NAME
+            args.settings = DEFAULT_CONFIG_NAME
 
     settings = read_settings(config_file, override=get_config(args))
 
@@ -378,31 +384,32 @@ def get_instance(args):
 
 def main():
     args = parse_arguments()
-    init(args.verbosity)
+    init(args.verbosity, args.fatal)
 
     logger.debug('Pelican version: %s', __version__)
     logger.debug('Python version: %s', sys.version.split()[0])
 
-    pelican, settings = get_instance(args)
-    readers = Readers(settings)
-
-    watchers = {'content': folder_watcher(pelican.path,
-                                          readers.extensions,
-                                          pelican.ignore_files),
-                'theme': folder_watcher(pelican.theme,
-                                        [''],
-                                        pelican.ignore_files),
-                'settings': file_watcher(args.settings)}
-
-    old_static = settings.get("STATIC_PATHS", [])
-    for static_path in old_static:
-        # use a prefix to avoid possible overriding of standard watchers above
-        watchers['[static]%s' % static_path] = folder_watcher(
-            os.path.join(pelican.path, static_path),
-            [''],
-            pelican.ignore_files)
-
     try:
+        pelican, settings = get_instance(args)
+        readers = Readers(settings)
+
+        watchers = {'content': folder_watcher(pelican.path,
+                                              readers.extensions,
+                                              pelican.ignore_files),
+                    'theme': folder_watcher(pelican.theme,
+                                            [''],
+                                            pelican.ignore_files),
+                    'settings': file_watcher(args.settings)}
+
+        old_static = settings.get("STATIC_PATHS", [])
+        for static_path in old_static:
+            # use a prefix to avoid possible overriding of standard watchers
+            # above
+            watchers['[static]%s' % static_path] = folder_watcher(
+                os.path.join(pelican.path, static_path),
+                [''],
+                pelican.ignore_files)
+
         if args.autoreload:
             print('  --- AutoReload Mode: Monitoring `content`, `theme` and'
                   ' `settings` for changes. ---')

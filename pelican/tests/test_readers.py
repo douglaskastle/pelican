@@ -9,6 +9,13 @@ from pelican import readers
 from pelican.tests.support import get_settings, unittest
 from pelican.utils import SafeDatetime
 
+try:
+    from unittest.mock import patch
+except ImportError:
+    try:
+        from mock import patch
+    except ImportError:
+        patch = False
 
 CUR_DIR = os.path.dirname(__file__)
 CONTENT_PATH = os.path.join(CUR_DIR, 'content')
@@ -80,6 +87,22 @@ class DefaultReaderTest(ReaderTest):
     def test_readfile_unknown_extension(self):
         with self.assertRaises(TypeError):
             self.read_file(path='article_with_metadata.unknownextension')
+
+    @unittest.skipUnless(patch, 'Needs Mock module')
+    def test_find_empty_alt(self):
+        with patch('pelican.readers.logger') as log_mock:
+            content = ['<img alt="" src="test-image.png" width="300px" />',
+                       '<img src="test-image.png"  width="300px" alt="" />']
+
+            for tag in content:
+                readers.find_empty_alt(tag, '/test/path')
+                log_mock.warning.assert_called_with(
+                    u'Empty alt attribute for image %s in %s',
+                    u'test-image.png',
+                    u'/test/path',
+                    extra={'limit_msg':
+                           'Other images have empty alt attributes'}
+                )
 
 
 class RstReaderTest(ReaderTest):
@@ -298,7 +321,8 @@ class RstReaderTest(ReaderTest):
                                   TYPOGRIFY=True)
 
             expected = ('<p>An article with some&nbsp;code</p>\n'
-                        '<div class="highlight"><pre><span class="n">x</span>'
+                        '<div class="highlight"><pre><span></span>'
+                        '<span class="n">x</span>'
                         ' <span class="o">&amp;</span>'
                         ' <span class="n">y</span>\n</pre></div>\n'
                         '<p>A block&nbsp;quote:</p>\n<blockquote>\nx '
@@ -316,7 +340,8 @@ class RstReaderTest(ReaderTest):
                                   TYPOGRIFY_IGNORE_TAGS=['blockquote'])
 
             expected = ('<p>An article with some&nbsp;code</p>\n'
-                        '<div class="highlight"><pre><span class="n">x</span>'
+                        '<div class="highlight"><pre><span>'
+                        '</span><span class="n">x</span>'
                         ' <span class="o">&amp;</span>'
                         ' <span class="n">y</span>\n</pre></div>\n'
                         '<p>A block&nbsp;quote:</p>\n<blockquote>\nx '
@@ -357,6 +382,15 @@ class RstReaderTest(ReaderTest):
 
         self.assertDictHasSubset(page.metadata, expected)
 
+    def test_default_date_formats(self):
+        tuple_date = self.read_file(path='article.rst',
+                                    DEFAULT_DATE=(2012, 5, 1))
+        string_date = self.read_file(path='article.rst',
+                                     DEFAULT_DATE='2012-05-01')
+
+        self.assertEqual(tuple_date.metadata['date'],
+                         string_date.metadata['date'])
+
 
 @unittest.skipUnless(readers.Markdown, "markdown isn't installed")
 class MdReaderTest(ReaderTest):
@@ -394,20 +428,20 @@ class MdReaderTest(ReaderTest):
             _path('article_with_markdown_and_footnote.md'))
         expected_content = (
             '<p>This is some content'
-            '<sup id="fnref:1"><a class="footnote-ref" href="#fn:1" '
-            'rel="footnote">1</a></sup>'
+            '<sup id="fnref-1"><a class="footnote-ref" href="#fn-1"'
+            '>1</a></sup>'
             ' with some footnotes'
-            '<sup id="fnref:footnote"><a class="footnote-ref" '
-            'href="#fn:footnote" rel="footnote">2</a></sup></p>\n'
+            '<sup id="fnref-footnote"><a class="footnote-ref" '
+            'href="#fn-footnote">2</a></sup></p>\n'
 
             '<div class="footnote">\n'
-            '<hr />\n<ol>\n<li id="fn:1">\n'
+            '<hr>\n<ol>\n<li id="fn-1">\n'
             '<p>Numbered footnote&#160;'
-            '<a class="footnote-backref" href="#fnref:1" rev="footnote" '
+            '<a class="footnote-backref" href="#fnref-1" '
             'title="Jump back to footnote 1 in the text">&#8617;</a></p>\n'
-            '</li>\n<li id="fn:footnote">\n'
+            '</li>\n<li id="fn-footnote">\n'
             '<p>Named footnote&#160;'
-            '<a class="footnote-backref" href="#fnref:footnote" rev="footnote"'
+            '<a class="footnote-backref" href="#fnref-footnote"'
             ' title="Jump back to footnote 2 in the text">&#8617;</a></p>\n'
             '</li>\n</ol>\n</div>')
         expected_metadata = {
@@ -471,10 +505,12 @@ class MdReaderTest(ReaderTest):
         # expected
         page = self.read_file(
             path='article_with_markdown_markup_extensions.md',
-            MD_EXTENSIONS={
-                'markdown.extensions.toc': {},
-                'markdown.extensions.codehilite': {},
-                'markdown.extensions.extra': {}
+            MARKDOWN={
+                'extension_configs': {
+                    'markdown.extensions.toc': {},
+                    'markdown.extensions.codehilite': {},
+                    'markdown.extensions.extra': {}
+                }
             }
         )
         expected = ('<div class="toc">\n'
@@ -534,6 +570,22 @@ class MdReaderTest(ReaderTest):
             'authors': ['Author, First', 'Author, Second'],
         }
         self.assertDictHasSubset(metadata, expected)
+
+    def test_empty_file(self):
+        reader = readers.MarkdownReader(settings=get_settings())
+        content, metadata = reader.read(
+            _path('empty.md'))
+
+        self.assertEqual(metadata, {})
+        self.assertEqual(content, '')
+
+    def test_empty_file_with_bom(self):
+        reader = readers.MarkdownReader(settings=get_settings())
+        content, metadata = reader.read(
+            _path('empty_with_bom.md'))
+
+        self.assertEqual(metadata, {})
+        self.assertEqual(content, '')
 
 
 class HTMLReaderTest(ReaderTest):

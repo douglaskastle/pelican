@@ -131,6 +131,18 @@ class TestUtils(LoggedTestCase):
         for value, expected in samples:
             self.assertEqual(utils.slugify(value, subs), expected)
 
+    def test_slugify_substitute_and_keeping_non_alphanum(self):
+
+        samples = (('Fedora QA', 'fedora.qa'),
+                   ('C++ is used by Fedora QA', 'cpp is used by fedora.qa'),
+                   ('C++ is based on C', 'cpp-is-based-on-c'),
+                   ('C+++ test C+ test', 'cpp-test-c-test'),)
+
+        subs = (('Fedora QA', 'fedora.qa', True),
+                ('c++', 'cpp'),)
+        for value, expected in samples:
+            self.assertEqual(utils.slugify(value, subs), expected)
+
     def test_get_relative_path(self):
 
         samples = ((os.path.join('test', 'test.html'), os.pardir),
@@ -152,98 +164,114 @@ class TestUtils(LoggedTestCase):
             'short string')
         self.assertEqual(
             utils.truncate_html_words('word ' * 100, 20),
-            'word ' * 20 + '...')
+            'word ' * 20 + '…')
 
         # Words enclosed or intervaled by HTML tags.
         self.assertEqual(
             utils.truncate_html_words('<p>' + 'word ' * 100 + '</p>', 20),
-            '<p>' + 'word ' * 20 + '...</p>')
+            '<p>' + 'word ' * 20 + '…</p>')
         self.assertEqual(
             utils.truncate_html_words(
-                '<span\nstyle="\n...\n">' + 'word ' * 100 + '</span>', 20),
-            '<span\nstyle="\n...\n">' + 'word ' * 20 + '...</span>')
+                '<span\nstyle="\n…\n">' + 'word ' * 100 + '</span>', 20),
+            '<span\nstyle="\n…\n">' + 'word ' * 20 + '…</span>')
         self.assertEqual(
             utils.truncate_html_words('<br>' + 'word ' * 100, 20),
-            '<br>' + 'word ' * 20 + '...')
+            '<br>' + 'word ' * 20 + '…')
         self.assertEqual(
             utils.truncate_html_words('<!-- comment -->' + 'word ' * 100, 20),
-            '<!-- comment -->' + 'word ' * 20 + '...')
+            '<!-- comment -->' + 'word ' * 20 + '…')
 
         # Words with hypens and apostrophes.
         self.assertEqual(
             utils.truncate_html_words("a-b " * 100, 20),
-            "a-b " * 20 + '...')
+            "a-b " * 20 + '…')
         self.assertEqual(
             utils.truncate_html_words("it's " * 100, 20),
-            "it's " * 20 + '...')
+            "it's " * 20 + '…')
 
         # Words with HTML entity references.
         self.assertEqual(
             utils.truncate_html_words("&eacute; " * 100, 20),
-            "&eacute; " * 20 + '...')
+            "&eacute; " * 20 + '…')
         self.assertEqual(
             utils.truncate_html_words("caf&eacute; " * 100, 20),
-            "caf&eacute; " * 20 + '...')
+            "caf&eacute; " * 20 + '…')
         self.assertEqual(
             utils.truncate_html_words("&egrave;lite " * 100, 20),
-            "&egrave;lite " * 20 + '...')
+            "&egrave;lite " * 20 + '…')
         self.assertEqual(
             utils.truncate_html_words("cafeti&eacute;re " * 100, 20),
-            "cafeti&eacute;re " * 20 + '...')
+            "cafeti&eacute;re " * 20 + '…')
         self.assertEqual(
             utils.truncate_html_words("&int;dx " * 100, 20),
-            "&int;dx " * 20 + '...')
+            "&int;dx " * 20 + '…')
 
         # Words with HTML character references inside and outside
         # the ASCII range.
         self.assertEqual(
             utils.truncate_html_words("&#xe9; " * 100, 20),
-            "&#xe9; " * 20 + '...')
+            "&#xe9; " * 20 + '…')
         self.assertEqual(
             utils.truncate_html_words("&#x222b;dx " * 100, 20),
-            "&#x222b;dx " * 20 + '...')
+            "&#x222b;dx " * 20 + '…')
 
     def test_process_translations(self):
+        fr_articles = []
+        en_articles = []
+
         # create a bunch of articles
-        # 1: no translation metadata
-        fr_article1 = get_article(lang='fr', slug='yay', title='Un titre',
-                                  content='en français')
-        en_article1 = get_article(lang='en', slug='yay', title='A title',
-                                  content='in english')
-        # 2: reverse which one is the translation thanks to metadata
-        fr_article2 = get_article(lang='fr', slug='yay2', title='Un titre',
-                                  content='en français')
-        en_article2 = get_article(lang='en', slug='yay2', title='A title',
-                                  content='in english',
-                                  extra_metadata={'translation': 'true'})
+        # 0: no translation metadata
+        fr_articles.append(get_article(lang='fr', slug='yay0', title='Titre',
+                                       content='en français'))
+        en_articles.append(get_article(lang='en', slug='yay0', title='Title',
+                                       content='in english'))
+        # 1: translation metadata on default lang
+        fr_articles.append(get_article(lang='fr', slug='yay1', title='Titre',
+                                       content='en français'))
+        en_articles.append(get_article(lang='en', slug='yay1', title='Title',
+                                       content='in english',
+                                       extra_metadata={'translation': 'true'}))
+        # 2: translation metadata not on default lang
+        fr_articles.append(get_article(lang='fr', slug='yay2', title='Titre',
+                                       content='en français',
+                                       extra_metadata={'translation': 'true'}))
+        en_articles.append(get_article(lang='en', slug='yay2', title='Title',
+                                       content='in english'))
         # 3: back to default language detection if all items have the
         #    translation metadata
-        fr_article3 = get_article(lang='fr', slug='yay3', title='Un titre',
-                                  content='en français',
-                                  extra_metadata={'translation': 'yep'})
-        en_article3 = get_article(lang='en', slug='yay3', title='A title',
-                                  content='in english',
-                                  extra_metadata={'translation': 'yes'})
+        fr_articles.append(get_article(lang='fr', slug='yay3', title='Titre',
+                                       content='en français',
+                                       extra_metadata={'translation': 'yep'}))
+        en_articles.append(get_article(lang='en', slug='yay3', title='Title',
+                                       content='in english',
+                                       extra_metadata={'translation': 'yes'}))
 
-        articles = [fr_article1, en_article1, fr_article2, en_article2,
-                    fr_article3, en_article3]
+        # try adding articles in both orders
+        for lang0_articles, lang1_articles in ((fr_articles, en_articles),
+                                               (en_articles, fr_articles)):
+            articles = lang0_articles + lang1_articles
 
-        index, trans = utils.process_translations(articles)
+            index, trans = utils.process_translations(articles)
 
-        self.assertIn(en_article1, index)
-        self.assertIn(fr_article1, trans)
-        self.assertNotIn(en_article1, trans)
-        self.assertNotIn(fr_article1, index)
+            self.assertIn(en_articles[0], index)
+            self.assertIn(fr_articles[0], trans)
+            self.assertNotIn(en_articles[0], trans)
+            self.assertNotIn(fr_articles[0], index)
 
-        self.assertIn(fr_article2, index)
-        self.assertIn(en_article2, trans)
-        self.assertNotIn(fr_article2, trans)
-        self.assertNotIn(en_article2, index)
+            self.assertIn(fr_articles[1], index)
+            self.assertIn(en_articles[1], trans)
+            self.assertNotIn(fr_articles[1], trans)
+            self.assertNotIn(en_articles[1], index)
 
-        self.assertIn(en_article3, index)
-        self.assertIn(fr_article3, trans)
-        self.assertNotIn(en_article3, trans)
-        self.assertNotIn(fr_article3, index)
+            self.assertIn(en_articles[2], index)
+            self.assertIn(fr_articles[2], trans)
+            self.assertNotIn(en_articles[2], trans)
+            self.assertNotIn(fr_articles[2], index)
+
+            self.assertIn(en_articles[3], index)
+            self.assertIn(fr_articles[3], trans)
+            self.assertNotIn(en_articles[3], trans)
+            self.assertNotIn(fr_articles[3], index)
 
     def test_watchers(self):
         # Test if file changes are correctly detected
@@ -378,7 +406,7 @@ class TestUtils(LoggedTestCase):
             utils.strftime(d, 'Yayınlanma tarihi: %A, %d %B %Y'),
             'Yayınlanma tarihi: Çarşamba, 29 Ağustos 2012')
 
-        # non-ascii format candidate (someone might pass it... for some reason)
+        # non-ascii format candidate (someone might pass it… for some reason)
         self.assertEqual(
             utils.strftime(d, '%Y yılında %üretim artışı'),
             '2012 yılında %üretim artışı')
@@ -413,7 +441,7 @@ class TestUtils(LoggedTestCase):
             utils.strftime(d, 'Écrit le %d %B %Y'),
             'Écrit le 29 août 2012')
 
-        # non-ascii format candidate (someone might pass it... for some reason)
+        # non-ascii format candidate (someone might pass it… for some reason)
         self.assertEqual(
             utils.strftime(d, '%écrits en %Y'),
             '%écrits en 2012')

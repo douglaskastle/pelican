@@ -5,7 +5,6 @@ import calendar
 import fnmatch
 import logging
 import os
-import shutil
 from codecs import open
 from collections import defaultdict
 from functools import partial
@@ -21,8 +20,9 @@ from pelican import signals
 from pelican.cache import FileStampDataCacher
 from pelican.contents import Article, Draft, Page, Static, is_valid_content
 from pelican.readers import Readers
-from pelican.utils import (DateFormatter, copy, mkdir_p, posixize_path,
-                           process_translations, python_2_unicode_compatible)
+from pelican.utils import (DateFormatter, copy, copy_file_metadata, mkdir_p,
+                           posixize_path, process_translations,
+                           python_2_unicode_compatible)
 
 
 logger = logging.getLogger(__name__)
@@ -61,14 +61,12 @@ class Generator(object):
         simple_loader = FileSystemLoader(os.path.join(theme_path,
                                          "themes", "simple", "templates"))
         self.env = Environment(
-            trim_blocks=True,
-            lstrip_blocks=True,
             loader=ChoiceLoader([
                 FileSystemLoader(self._templates_path),
                 simple_loader,  # implicit inheritance
                 PrefixLoader({'!simple': simple_loader})  # explicit one
             ]),
-            extensions=self.settings['JINJA_EXTENSIONS'],
+            **self.settings['JINJA_ENVIRONMENT']
         )
 
         logger.debug('Template list: %s', self.env.list_templates())
@@ -100,8 +98,8 @@ class Generator(object):
         """Inclusion logic for .get_files(), returns True/False
 
         :param path: the path which might be including
-        :param extensions: the list of allowed extensions (if False, all
-            extensions are allowed)
+        :param extensions: the list of allowed extensions, or False if all
+            extensions are allowed
         """
         if extensions is None:
             extensions = tuple(self.readers.extensions)
@@ -112,8 +110,10 @@ class Generator(object):
         if any(fnmatch.fnmatch(basename, ignore) for ignore in ignores):
             return False
 
-        if extensions is False or basename.endswith(extensions):
+        ext = os.path.splitext(basename)[1][1:]
+        if extensions is False or ext in extensions:
             return True
+
         return False
 
     def get_files(self, paths, exclude=[], extensions=None):
@@ -309,24 +309,26 @@ class ArticlesGenerator(CachingGenerator):
             if self.settings.get('CATEGORY_FEED_ATOM'):
                 writer.write_feed(arts, self.context,
                                   self.settings['CATEGORY_FEED_ATOM']
-                                  % cat.slug)
+                                  % cat.slug, feed_title=cat.name)
 
             if self.settings.get('CATEGORY_FEED_RSS'):
                 writer.write_feed(arts, self.context,
                                   self.settings['CATEGORY_FEED_RSS']
-                                  % cat.slug, feed_type='rss')
+                                  % cat.slug, feed_title=cat.name,
+                                  feed_type='rss')
 
         for auth, arts in self.authors:
             arts.sort(key=attrgetter('date'), reverse=True)
             if self.settings.get('AUTHOR_FEED_ATOM'):
                 writer.write_feed(arts, self.context,
                                   self.settings['AUTHOR_FEED_ATOM']
-                                  % auth.slug)
+                                  % auth.slug, feed_title=auth.name)
 
             if self.settings.get('AUTHOR_FEED_RSS'):
                 writer.write_feed(arts, self.context,
                                   self.settings['AUTHOR_FEED_RSS']
-                                  % auth.slug, feed_type='rss')
+                                  % auth.slug, feed_title=auth.name,
+                                  feed_type='rss')
 
         if (self.settings.get('TAG_FEED_ATOM') or
                 self.settings.get('TAG_FEED_RSS')):
@@ -335,12 +337,12 @@ class ArticlesGenerator(CachingGenerator):
                 if self.settings.get('TAG_FEED_ATOM'):
                     writer.write_feed(arts, self.context,
                                       self.settings['TAG_FEED_ATOM']
-                                      % tag.slug)
+                                      % tag.slug, feed_title=tag.name)
 
                 if self.settings.get('TAG_FEED_RSS'):
                     writer.write_feed(arts, self.context,
                                       self.settings['TAG_FEED_RSS'] % tag.slug,
-                                      feed_type='rss')
+                                      feed_title=tag.name, feed_type='rss')
 
         if (self.settings.get('TRANSLATION_FEED_ATOM') or
                 self.settings.get('TRANSLATION_FEED_RSS')):
@@ -531,7 +533,7 @@ class ArticlesGenerator(CachingGenerator):
                     continue
 
                 if article_or_draft.status.lower() == "published":
-                    all_articles.append(article_or_draft)
+                    pass
                 elif article_or_draft.status.lower() == "draft":
                     article_or_draft = self.readers.read_file(
                         base_path=self.path, path=f, content_class=Draft,
@@ -540,8 +542,6 @@ class ArticlesGenerator(CachingGenerator):
                         preread_sender=self,
                         context_signal=signals.article_generator_context,
                         context_sender=self)
-                    self.add_source_path(article_or_draft)
-                    all_drafts.append(article_or_draft)
                 else:
                     logger.error(
                         "Unknown status '%s' for file %s, skipping it.",
@@ -551,6 +551,10 @@ class ArticlesGenerator(CachingGenerator):
 
                 self.cache_data(f, article_or_draft)
 
+            if article_or_draft.status.lower() == "published":
+                all_articles.append(article_or_draft)
+            else:
+                all_drafts.append(article_or_draft)
             self.add_source_path(article_or_draft)
 
         self.articles, self.translations = process_translations(
@@ -634,11 +638,7 @@ class PagesGenerator(CachingGenerator):
                     self._add_failed_source_path(f)
                     continue
 
-                if page.status.lower() == "published":
-                    all_pages.append(page)
-                elif page.status.lower() == "hidden":
-                    hidden_pages.append(page)
-                else:
+                if page.status.lower() not in ("published", "hidden"):
                     logger.error(
                         "Unknown status '%s' for file %s, skipping it.",
                         page.status, f)
@@ -647,6 +647,10 @@ class PagesGenerator(CachingGenerator):
 
                 self.cache_data(f, page)
 
+            if page.status.lower() == "published":
+                all_pages.append(page)
+            elif page.status.lower() == "hidden":
+                hidden_pages.append(page)
             self.add_source_path(page)
 
         self.pages, self.translations = process_translations(
@@ -725,8 +729,8 @@ class StaticGenerator(Generator):
             source_path = os.path.join(self.path, sc.source_path)
             save_as = os.path.join(self.output_path, sc.save_as)
             mkdir_p(os.path.dirname(save_as))
-            shutil.copy2(source_path, save_as)
             logger.info('Copying %s to %s', sc.source_path, sc.save_as)
+            copy_file_metadata(source_path, save_as)
 
 
 class SourceFileGenerator(Generator):

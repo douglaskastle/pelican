@@ -172,6 +172,7 @@ class Content(object):
             'lang': getattr(self, 'lang', 'en'),
             'date': getattr(self, 'date', SafeDatetime.now()),
             'author': self.author.slug if hasattr(self, 'author') else '',
+            'tag': self.tag.slug if hasattr(self, 'tag') else '',
             'category': self.category.slug if hasattr(self, 'category') else ''
         })
         return metadata
@@ -472,5 +473,6 @@ def is_valid_content(content, f):
         return True
     except NameError as e:
         logger.error(
-            "Skipping %s: could not find information about '%s'", f, e)
+            "Skipping %s: could not find information about '%s'",
+            f, six.text_type(e))
         return False

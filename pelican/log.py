@@ -92,6 +92,7 @@ class LimitFilter(logging.Filter):
     """
 
     _ignore = set()
+    _raised_messages = set()
     _threshold = 5
     _group_count = defaultdict(int)
 
@@ -105,12 +106,18 @@ class LimitFilter(logging.Filter):
         group_args = record.__dict__.get('limit_args', ())
 
         # ignore record if it was already raised
-        # use .getMessage() and not .msg for string formatting
-        ignore_key = (record.levelno, record.getMessage())
-        if ignore_key in self._ignore:
+        message_key = (record.levelno, record.getMessage())
+        if message_key in self._raised_messages:
             return False
         else:
-            self._ignore.add(ignore_key)
+            self._raised_messages.add(message_key)
+
+        # ignore LOG_FILTER records by templates when "debug" isn't enabled
+        logger_level = logging.getLogger().getEffectiveLevel()
+        if logger_level > logging.DEBUG:
+            ignore_key = (record.levelno, record.msg)
+            if ignore_key in self._ignore:
+                return False
 
         # check if we went over threshold
         if group:
@@ -150,7 +157,7 @@ class SafeLogger(logging.Logger):
         so convert the message to unicode with the correct encoding
         '''
         if isinstance(arg, Exception):
-            text = '%s: %s' % (arg.__class__.__name__, arg)
+            text = str('%s: %s') % (arg.__class__.__name__, arg)
             if six.PY2:
                 text = text.decode(self._exc_encoding)
             return text
@@ -175,7 +182,22 @@ class LimitLogger(SafeLogger):
     def enable_filter(self):
         self.addFilter(LimitLogger.limit_filter)
 
-logging.setLoggerClass(LimitLogger)
+
+class FatalLogger(LimitLogger):
+    warnings_fatal = False
+    errors_fatal = False
+
+    def warning(self, *args, **kwargs):
+        super(FatalLogger, self).warning(*args, **kwargs)
+        if FatalLogger.warnings_fatal:
+            raise RuntimeError('Warning encountered')
+
+    def error(self, *args, **kwargs):
+        super(FatalLogger, self).error(*args, **kwargs)
+        if FatalLogger.errors_fatal:
+            raise RuntimeError('Error encountered')
+
+logging.setLoggerClass(FatalLogger)
 
 
 def supports_color():
@@ -203,7 +225,9 @@ def get_formatter():
         return TextFormatter()
 
 
-def init(level=None, handler=logging.StreamHandler(), name=None):
+def init(level=None, fatal='', handler=logging.StreamHandler(), name=None):
+    FatalLogger.warnings_fatal = fatal.startswith('warning')
+    FatalLogger.errors_fatal = bool(fatal)
 
     logger = logging.getLogger(name)
 

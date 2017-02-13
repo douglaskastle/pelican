@@ -98,6 +98,25 @@ class TestGenerator(unittest.TestCase):
             'subdir.md', found_files,
             "get_files() excluded a subdirectory by name, ignoring its path")
 
+    def test_custom_jinja_environment(self):
+        """
+            Test that setting the JINJA_ENVIRONMENT
+            properly gets set from the settings config
+        """
+        settings = get_settings()
+        comment_start_string = 'abc'
+        comment_end_string = '/abc'
+        settings['JINJA_ENVIRONMENT'] = {
+            'comment_start_string': comment_start_string,
+            'comment_end_string': comment_end_string
+        }
+        generator = Generator(settings.copy(), settings,
+                              CUR_DIR, settings['THEME'], None)
+        self.assertEqual(comment_start_string,
+                         generator.env.comment_start_string)
+        self.assertEqual(comment_end_string,
+                         generator.env.comment_end_string)
+
 
 class TestArticlesGenerator(unittest.TestCase):
 
@@ -297,6 +316,8 @@ class TestArticlesGenerator(unittest.TestCase):
         Test that the context of a generated period_archive is passed
         'period' : a tuple of year, month, day according to the time period
         """
+        old_locale = locale.setlocale(locale.LC_ALL)
+        locale.setlocale(locale.LC_ALL, str('C'))
         settings = get_settings(filenames={})
 
         settings['YEAR_ARCHIVE_SAVE_AS'] = 'posts/{date:%Y}/index.html'
@@ -357,6 +378,7 @@ class TestArticlesGenerator(unittest.TestCase):
                                  generator.get_template("period_archives"),
                                  settings,
                                  blog=True, dates=dates)
+        locale.setlocale(locale.LC_ALL, old_locale)
 
     def test_nonexistent_template(self):
         """Attempt to load a non-existent template"""

@@ -244,7 +244,7 @@ def pelican_open(filename, mode='rb', strip_crs=(sys.platform == 'win32')):
 
     with codecs.open(filename, mode, encoding='utf-8') as infile:
         content = infile.read()
-    if content[0] == codecs.BOM_UTF8.decode('utf8'):
+    if content[:1] == codecs.BOM_UTF8.decode('utf8'):
         content = content[1:]
     if strip_crs:
         content = content.replace('\r\n', '\n')
@@ -270,10 +270,34 @@ def slugify(value, substitutions=()):
         value = value.decode('ascii')
     # still unicode
     value = unicodedata.normalize('NFKD', value).lower()
-    for src, dst in substitutions:
+
+    # backward compatible covert from 2-tuples to 3-tuples
+    new_subs = []
+    for tpl in substitutions:
+        try:
+            src, dst, skip = tpl
+        except ValueError:
+            src, dst = tpl
+            skip = False
+        new_subs.append((src, dst, skip))
+    substitutions = tuple(new_subs)
+
+    # by default will replace non-alphanum characters
+    replace = True
+    for src, dst, skip in substitutions:
+        orig_value = value
         value = value.replace(src.lower(), dst.lower())
-    value = re.sub('[^\w\s-]', '', value).strip()
-    value = re.sub('[-\s]+', '-', value)
+        # if replacement was made then skip non-alphanum
+        # replacement if instructed to do so
+        if value != orig_value:
+            replace = replace and not skip
+
+    if replace:
+        value = re.sub('[^\w\s-]', '', value).strip()
+        value = re.sub('[-\s]+', '-', value)
+    else:
+        value = value.strip()
+
     # we want only ASCII chars
     value = value.encode('ascii', 'ignore')
     # but Pelican should generally use only unicode
@@ -313,7 +337,7 @@ def copy(source, destination, ignores=None):
             logger.info('Creating directory %s', dst_dir)
             os.makedirs(dst_dir)
         logger.info('Copying %s to %s', source_, destination_)
-        shutil.copy2(source_, destination_)
+        copy_file_metadata(source_, destination_)
 
     elif os.path.isdir(source_):
         if not os.path.exists(destination_):
@@ -343,11 +367,23 @@ def copy(source, destination, ignores=None):
                 dst_path = os.path.join(dst_dir, o)
                 if os.path.isfile(src_path):
                     logger.info('Copying %s to %s', src_path, dst_path)
-                    shutil.copy2(src_path, dst_path)
+                    copy_file_metadata(src_path, dst_path)
                 else:
                     logger.warning('Skipped copy %s (not a file or '
                                    'directory) to %s',
                                    src_path, dst_path)
+
+
+def copy_file_metadata(source, destination):
+    '''Copy a file and its metadata (perm bits, access times, ...)'''
+
+    # This function is a workaround for Android python copystat
+    # bug ([issue28141]) https://bugs.python.org/issue28141
+    try:
+        shutil.copy2(source, destination)
+    except OSError as e:
+        logger.warning("A problem occurred copying file %s to %s; %s",
+                       source, destination, e)
 
 
 def clean_output_dir(path, retention):
@@ -531,12 +567,12 @@ class _HTMLWordTruncator(HTMLParser):
         self.handle_ref(six.unichr(codepoint))
 
 
-def truncate_html_words(s, num, end_text='...'):
+def truncate_html_words(s, num, end_text='…'):
     """Truncates HTML to a certain number of words.
 
     (not counting tags and comments). Closes opened tags if they were correctly
     closed in the given html. Takes an optional argument of what should be used
-    to notify that the string has been truncated, defaulting to ellipsis (...).
+    to notify that the string has been truncated, defaulting to ellipsis (…).
 
     Newlines in the HTML are preserved. (From the django framework).
     """
@@ -589,43 +625,57 @@ def process_translations(content_list, order_by=None):
     index = []
     translations = []
 
+    def _warn_source_paths(msg, items, *extra):
+        args = [len(items)]
+        args.extend(extra)
+        args.extend((x.source_path for x in items))
+        logger.warning('{}: {}'.format(msg, '\n%s' * len(items)), *args)
+
     for slug, items in grouped_by_slugs:
         items = list(items)
-        # items with `translation` metadata will be used as translations...
-        default_lang_items = list(filter(
-            lambda i:
-                i.metadata.get('translation', 'false').lower() == 'false',
-            items))
-        # ...unless all items with that slug are translations
-        if not default_lang_items:
-            default_lang_items = items
+
+        # display warnings if slug is empty
+        if not slug:
+            _warn_source_paths('There are %s items with empty slug', items)
 
         # display warnings if several items have the same lang
         for lang, lang_items in groupby(items, attrgetter('lang')):
             lang_items = list(lang_items)
-            len_ = len(lang_items)
-            if len_ > 1:
-                logger.warning('There are %s variants of "%s" with lang %s',
-                               len_, slug, lang)
-                for x in lang_items:
-                    logger.warning('\t%s', x.source_path)
+            if len(lang_items) > 1:
+                _warn_source_paths(
+                    'There are %s items with slug "%s" with lang %s',
+                    lang_items,
+                    slug,
+                    lang)
+
+        # items with `translation` metadata will be used as translations...
+        candidate_items = list(filter(
+            lambda i:
+                i.metadata.get('translation', 'false').lower() == 'false',
+            items))
+        # ...unless all items with that slug are translations
+        if not candidate_items:
+            logger.warning('All items with slug "%s" are translations', slug)
+            candidate_items = items
 
         # find items with default language
-        default_lang_items = list(filter(
+        original_items = list(filter(
             attrgetter('in_default_lang'),
-            default_lang_items))
+            candidate_items))
 
-        # if there is no article with default language, take an other one
-        if not default_lang_items:
-            default_lang_items = items[:1]
+        # if there is no article with default language, go back one step
+        if not original_items:
+            original_items = candidate_items
 
-        if not slug:
-            logger.warning(
-                'Empty slug for %s. You can fix this by '
-                'adding a title or a slug to your content',
-                default_lang_items[0].source_path)
-        index.extend(default_lang_items)
-        translations.extend([x for x in items if x not in default_lang_items])
+        # display warning if there are several original items
+        if len(original_items) > 1:
+            _warn_source_paths(
+                'There are %s original (not translated) items with slug "%s"',
+                original_items,
+                slug)
+
+        index.extend(original_items)
+        translations.extend([x for x in items if x not in original_items])
         for a in items:
             a.translations = [x for x in items if x != a]
 
